@@ -1,0 +1,335 @@
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.150.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.150.0/examples/jsm/"
+      }
+    }
+  </script>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+    #container { width: 100%; height: 100%; }
+    #status {
+      position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.75); color: #fff; padding: 12px 24px;
+      border-radius: 30px; font-family: sans-serif; font-size: 14px; z-index: 999;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3); letter-spacing: 1px;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">Đang tải...</div>
+  <div id="container"></div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+    import { MindARThree } from 'https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js';
+
+    // ---------- Tạo tòa sen cánh siêu nhỏ nghệ thuật ----------
+    function createLotus() {
+      const group = new THREE.Group();
+      const pivots = [];
+
+      const layers = [
+        { count: 14, radius: 0.11, cBase: 0x3d6a7a, cTip: 0x8faeb4, minAngle: -0.35, maxAngle: 0.35, delayBase: 0.00, thickness: 0.001 },
+        { count: 12, radius: 0.095, cBase: 0x9cb8bd, cTip: 0xffe4e1, minAngle: -0.25, maxAngle: 0.28, delayBase: 0.15, thickness: 0.001 },
+        { count: 10, radius: 0.08, cBase: 0xffffff, cTip: 0xff6cb5, minAngle: -0.15, maxAngle: 0.20, delayBase: 0.30, thickness: 0.001 },
+        { count: 8,  radius: 0.065, cBase: 0xff8ebb, cTip: 0xe6006f, minAngle: -0.05, maxAngle: 0.12, delayBase: 0.45, thickness: 0.001 }
+      ];
+
+      layers.forEach((layer, layerIdx) => {
+        for (let i = 0; i < layer.count; i++) {
+          const angleOffset = (layerIdx % 2 === 0) ? 0 : (Math.PI / layer.count);
+          const angle = (i / layer.count) * Math.PI * 2 + angleOffset;
+
+          const shape = new THREE.Shape();
+          shape.moveTo(0, 0);
+          shape.bezierCurveTo( 0.025, 0.015,  0.03, 0.05, 0.002, 0.10);
+          shape.lineTo(0, 0.102);
+          shape.bezierCurveTo(-0.03, 0.05, -0.025, 0.015, 0, 0);
+
+          const extrudeSettings = {
+            depth: layer.thickness,
+            bevelEnabled: true,
+            bevelSegments: 3,
+            steps: 1,
+            bevelSize: 0.001,
+            bevelThickness: 0.001
+          };
+          const geo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+
+          const pos = geo.attributes.position;
+          const colors = [];
+          const colorBase = new THREE.Color(layer.cBase);
+          const colorTip = new THREE.Color(layer.cTip);
+
+          for (let j = 0; j < pos.count; j++) {
+            const x = pos.getX(j);
+            const y = pos.getY(j);
+            let z = pos.getZ(j);
+            
+            const normY = Math.max(0, Math.min(1, y / 0.102));
+            z += Math.pow(normY, 2.2) * 0.018;
+            z += (0.002 - Math.pow(x, 2) * 3.0) * (normY * 0.8);
+            
+            pos.setXYZ(j, x, y, z);
+
+            const mixedColor = colorBase.clone().lerp(colorTip, normY);
+            colors.push(mixedColor.r, mixedColor.g, mixedColor.b);
+          }
+          geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+          geo.computeVertexNormals();
+
+          const mat = new THREE.MeshPhysicalMaterial({
+            vertexColors: true,
+            roughness: 0.35,
+            metalness: 0.0,
+            clearcoat: 0.3,
+            transmission: 0.65, 
+            thickness: 0.01,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0,
+          });
+
+          const petal = new THREE.Mesh(geo, mat);
+
+          const pivot = new THREE.Group();
+          pivot.position.set(Math.sin(angle) * layer.radius, 0, Math.cos(angle) * layer.radius);
+          pivot.rotation.y = -angle; 
+          pivot.add(petal);
+          group.add(pivot);
+
+          // NGHỆ THUẬT: Tạo độ trễ tịnh tiến tuần tự theo vòng tròn (Chasing Delay)
+          const organicDelay = layer.delayBase + (i / layer.count) * 0.15;
+
+          pivots.push({ 
+            pivot, 
+            petal, 
+            minAngle: layer.minAngle, 
+            maxAngle: layer.maxAngle, 
+            delay: organicDelay 
+          });
+        }
+      });
+
+      const baseGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.01, 32);
+      const baseMat = new THREE.MeshStandardMaterial({
+        color: 0xffd700, emissive: 0xff9900, emissiveIntensity: 0.4,
+        transparent: true, opacity: 0, roughness: 0.2
+      });
+      const base = new THREE.Mesh(baseGeo, baseMat);
+      base.position.y = -0.005;
+      group.add(base);
+
+      return { group, pivots, base };
+    }
+
+    // ---------- Hạt bụi sáng sinh khí ----------
+    function createParticles(count = 95) {
+      const positions = new Float32Array(count * 3);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+      const mat = new THREE.PointsMaterial({
+        color: 0xfff6bd, size: 0.008,
+        transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+
+      const points = new THREE.Points(geo, mat);
+      const data = Array.from({ length: count }, () => ({
+        x: (Math.random() - 0.5) * 0.25,
+        y: Math.random() * 0.4,
+        z: (Math.random() - 0.5) * 0.25,
+        vy: Math.random() * 0.0035 + 0.0015,
+        vx: (Math.random() - 0.5) * 0.002,
+        vz: (Math.random() - 0.5) * 0.002,
+        life: Math.random(),
+        maxLife: 1.2 + Math.random() * 1.2,
+      }));
+
+      return { points, data, positions, mat };
+    }
+
+    function updateParticles(p, bloom) {
+      if (bloom < 0.3) { p.mat.opacity = 0; return; }
+      p.mat.opacity = Math.min(0.85, (bloom - 0.3) * 2.5);
+
+      p.data.forEach((d, i) => {
+        d.life += 0.012;
+        if (d.life > d.maxLife) {
+          d.x = (Math.random() - 0.5) * 0.2;
+          d.y = -0.02;
+          d.z = (Math.random() - 0.5) * 0.2;
+          d.life = 0;
+        }
+        d.x += d.vx; d.y += d.vy; d.z += d.vz;
+        p.positions[i * 3]     = d.x;
+        p.positions[i * 3 + 1] = d.y;
+        p.positions[i * 3 + 2] = d.z;
+      });
+      p.points.geometry.attributes.position.needsUpdate = true;
+    }
+
+    // ---------- Khởi động AR ----------
+    const status = document.getElementById("status");
+
+    const start = async () => {
+      try {
+        status.textContent = "Đang khởi động camera...";
+        const mindarThree = new MindARThree({
+          container: document.getElementById("container"),
+          imageTargetSrc: "./targets.mind",
+        });
+
+        const { renderer, scene, camera } = mindarThree;
+        renderer.outputEncoding = THREE.sRGBEncoding;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.35;
+
+        scene.add(new THREE.AmbientLight(0xfff0f5, 0.5)); 
+        
+        const dirLight = new THREE.DirectionalLight(0xfffdf2, 3.2); 
+        dirLight.position.set(2, 6, 4);
+        scene.add(dirLight);
+        
+        const fillLight = new THREE.DirectionalLight(0xa5c5ff, 1.2); 
+        fillLight.position.set(-3, 3, -2);
+        scene.add(fillLight);
+
+        const pointLight = new THREE.PointLight(0xff9900, 3.5, 2.5);
+        scene.add(pointLight);
+
+        const anchor = mindarThree.addAnchor(0);
+
+        const lotus = createLotus();
+        lotus.group.position.y = -0.11; 
+        anchor.group.add(lotus.group);
+
+        const particles = createParticles();
+        anchor.group.add(particles.points);
+
+        // Hào quang nằm phía sau Phật (Z = -0.08)
+        const haloGeo = new THREE.RingGeometry(0.06, 0.12, 64);
+        const haloMat = new THREE.MeshBasicMaterial({
+          color: 0xffdf6d, side: THREE.DoubleSide, transparent: true, opacity: 0,
+          blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const halo = new THREE.Mesh(haloGeo, haloMat);
+        halo.position.set(0, 0.14, -0.08); 
+        anchor.group.add(halo);
+
+        const glowGeo = new THREE.RingGeometry(0.11, 0.24, 64);
+        const glowMat = new THREE.MeshBasicMaterial({
+          color: 0xff4500, side: THREE.DoubleSide, transparent: true, opacity: 0,
+          blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const glow = new THREE.Mesh(glowGeo, glowMat);
+        glow.position.set(0, 0.14, -0.082); 
+        anchor.group.add(glow);
+
+        // Tải tượng Phật
+        let model = null;
+        status.textContent = "Đang tải model 3D...";
+        const loader = new GLTFLoader();
+        loader.setMeshoptDecoder(MeshoptDecoder);
+        loader.load("./model_small.glb", (gltf) => {
+          model = gltf.scene;
+          model.scale.set(0.1, 0.1, 0.1);
+          model.traverse(obj => {
+            if (obj.isMesh) {
+              obj.material = obj.material.clone();
+              obj.material.transparent = true;
+              obj.material.opacity = 0;
+            }
+          });
+          anchor.group.add(model);
+        }, undefined, (err) => {
+          status.textContent = "Lỗi load model: " + err.message;
+        });
+
+        let bloom = 0;
+        let active = false;
+
+        anchor.onTargetFound = () => { active = true; };
+        anchor.onTargetLost  = () => { active = false; bloom = 0; };
+
+        await mindarThree.start();
+        status.textContent = "Hướng camera vào ảnh target";
+        setTimeout(() => status.style.display = "none", 3000);
+
+        let t = 0;
+        renderer.setAnimationLoop(() => {
+          t += 0.02;
+
+          // Điều chỉnh tốc độ nở hoa ban đầu mượt mà, từ tốn
+          if (active && bloom < 1) bloom = Math.min(bloom + 0.007, 1);
+
+          // Vòng lặp điều khiển chuyển động nghệ thuật của cánh hoa
+          lotus.pivots.forEach(({ pivot, petal, minAngle, maxAngle, delay }) => {
+            const p = Math.max(0, Math.min(1, (bloom - delay) / (1 - delay + 0.001)));
+            // Sử dụng hàm Easing Smoothstep cho chuyển động mềm mại thượng thừa
+            const eased = p * p * (3 - 2 * p);
+            
+            let targetAngle = THREE.MathUtils.lerp(minAngle, maxAngle, eased);
+            
+            // Nhịp thở nhịp nhàng mở ra đóng vào tinh tế sau khi đã nở hoàn chỉnh
+            if (bloom >= 1) {
+              const breathe = Math.sin(t * 1.2) * 0.05; 
+              targetAngle += breathe;
+            }
+
+            pivot.rotation.x = targetAngle;
+            pivot.scale.setScalar(THREE.MathUtils.lerp(0.6, 1.0, eased));
+            petal.material.opacity = Math.min(1, p * 3.0);
+          });
+
+          lotus.base.material.opacity = Math.min(1, bloom * 2.5);
+
+          const mp = Math.max(0, Math.min(1, (bloom - 0.45) / 0.55));
+          const easedModel = 1 - Math.pow(1 - mp, 2);
+
+          if (model) {
+            model.traverse(obj => {
+              if (obj.isMesh) obj.material.opacity = easedModel;
+            });
+          }
+
+          // NGHỆ THUẬT: Hào quang sáng chậm lại, tỏa sáng nhẹ nhàng kiểu thiền định
+          const slowGlow1 = 0.78 + 0.22 * Math.sin(t * 1.0);
+          const slowGlow2 = 0.65 + 0.35 * Math.sin(t * 0.6);
+          
+          haloMat.opacity = easedModel * slowGlow1 * 0.95;
+          glowMat.opacity = easedModel * slowGlow2 * 0.50;
+
+          // Xoay nhẹ hai tầng ngược chiều nhau cực chậm tạo độ sâu không gian
+          halo.rotation.z += 0.001;
+          glow.rotation.z -= 0.0006;
+
+          updateParticles(particles, bloom);
+
+          pointLight.position.set(
+            Math.sin(t * 0.5) * 0.9,
+            0.2 + Math.sin(t * 0.3) * 0.12,
+            Math.cos(t * 0.5) * 0.9
+          );
+          pointLight.intensity = (2.2 + Math.sin(t * 1.5) * 0.3) * Math.min(1, bloom * 2);
+
+          renderer.render(scene, camera);
+        });
+      } catch(e) {
+        status.textContent = "Lỗi: " + e.message;
+      }
+    };
+
+    start();
+  </script>
+</body>
+</html>
